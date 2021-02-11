@@ -1,51 +1,46 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Net;
-using System.Net.NetworkInformation;
-using System.Linq;
-using static System.Console;
+using System.Diagnostics;
+using System.Drawing;
+using System.IO;
+using System.Threading.Tasks;
+using Newtonsoft.Json;
 
 namespace TracerouteGUI
 {
     class Program
     {
-        static void Main(string[] args)
+        public static Settings settings;
+        static async Task Main(string[] args)
         {
+            settings = JsonConvert.DeserializeObject<Settings>(File.ReadAllText("appsettings.json"));
+
             string target = args[0];
-            const int BUFFER_SIZE = 32;
-            const int MAX_TTL = 30;
-            const int TIMEOUT = 5_000;
-
-            var validNodeStats = new IPStatus[] { IPStatus.Success, IPStatus.TtlExpired, IPStatus.TimeExceeded };
-            List<IPAddress> iPAddresses = new List<IPAddress>();
-            IPAddress targetIP = Dns.GetHostAddresses(target)[0];
-            PingOptions pingOptions = new PingOptions(1, false);
-
-            WriteLine($"Tracing route for {target} with adresses: {targetIP} ...");
-
-            while (pingOptions.Ttl <= MAX_TTL)
+            List<Location> locations = new();
+            IPLocator locator = new IPLocator();
+            Traceroute traceroute = new Traceroute();
+            
+            Console.WriteLine("Gathering locations...");
+            await foreach(var location in locator.LocateIPRange(traceroute.Trace(target)))
             {
-                byte[] buffer = new byte[BUFFER_SIZE];
-                new Random().NextBytes(buffer);
-                using (Ping ping = new Ping())
-                {
-                    PingReply reply = ping.Send(targetIP, TIMEOUT, buffer, pingOptions);
-                    Out.WriteLine($"IP: {reply.Address}\tTime: {reply.RoundtripTime}ms\tStatus: {reply.Status}");
-
-                    if (validNodeStats.Contains(reply.Status))
-                    {
-                        iPAddresses.Add(reply.Address);
-                    }
-
-                    if (reply.Status == IPStatus.Success) break;
-                }
-
-                pingOptions.Ttl++;
+                if (location.longitude is null || location.latitude is null )
+                    continue;
+                    
+                locations.Add(location);
             }
 
-            string IPs = string.Join('\n', iPAddresses);
-            WriteLine("Done...");
-            WriteLine(IPs);
+            Console.WriteLine("Gathed locations...");
+            Console.WriteLine("Initiating GMaps services...");
+
+            GoogleMapsProvider provider = new GoogleMapsProvider(settings, locations);
+            
+            Console.WriteLine("Making map...");
+
+            Image map = await provider.MakeMap();
+            string img_path = Path.Combine(Environment.CurrentDirectory, "map.png");    
+            map.Save(img_path);
+
+            Console.WriteLine("Image saved at: " + img_path);
         }
     }
 }
